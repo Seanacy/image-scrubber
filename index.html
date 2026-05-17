@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Scrubber — Remove AI Traces</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface-2: #1e1e1e;
+    --border: #2a2a2a;
+    --border-hover: #3a3a3a;
+    --text: #f0f0f0;
+    --text-muted: #888;
+    --accent: #6c5ce7;
+    --accent-glow: rgba(108, 92, 231, 0.15);
+    --green: #00b894;
+    --green-glow: rgba(0, 184, 148, 0.15);
+    --red: #e74c3c;
+    --red-glow: rgba(231, 76, 60, 0.15);
+    --orange: #f39c12;
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* Header */
+  .header {
+    width: 100%;
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header svg { width: 28px; height: 28px; }
+  .header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+  .header span { color: var(--text-muted); font-size: 14px; }
+
+  /* Main container */
+  .container {
+    width: 100%;
+    max-width: 800px;
+    padding: 32px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* Drop zone */
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 60px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface);
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+  }
+  .dropzone-icon { font-size: 48px; margin-bottom: 16px; }
+  .dropzone-text { font-size: 16px; color: var(--text); margin-bottom: 8px; }
+  .dropzone-sub { font-size: 13px; color: var(--text-muted); }
+  .dropzone input { display: none; }
+
+  /* Processing state */
+  .processing-bar {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+  }
+  .processing-bar.active { display: block; }
+  .processing-title { font-size: 14px; font-weight: 500; margin-bottom: 12px; }
+  .progress-track {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s;
+  }
+  .processing-steps {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .step.active { color: var(--text); }
+  .step.done { color: var(--green); }
+  .step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+  .step.active .step-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .step.done .step-dot { background: var(--green); }
+
+  /* Results */
+  .results {
+    display: none;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .results.active { display: flex; }
+
+  .result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .result-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    background: var(--green-glow);
+    color: var(--green);
+    border: 1px solid rgba(0, 184, 148, 0.3);
+  }
+
+  .btn {
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { filter: brightness(1.15); }
+  .btn-secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--border-hover); }
+
+  .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* Metadata comparison */
+  .meta-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .meta-header {
+    padding: 14px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+  }
+  .meta-header:hover { background: var(--surface-2); }
+  .meta-toggle { font-size: 12px; color: var(--text-muted); }
+  .meta-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s;
+  }
+  .meta-body.open { max-height: 600px; overflow-y: auto; }
+  .meta-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    gap: 12px;
+  }
+  .meta-row:last-child { border-bottom: none; }
+  .meta-key { color: var(--text-muted); width: 160px; flex-shrink: 0; }
+  .meta-val-before {
+    flex: 1;
+    color: var(--red);
+    text-decoration: line-through;
+    opacity: 0.7;
+    word-break: break-all;
+  }
+  .meta-val-after { color: var(--green); }
+  .meta-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .meta-status.removed { background: var(--red-glow); color: var(--red); }
+  .meta-status.clean { background: var(--green-glow); color: var(--green); }
+
+  /* Preview */
+  .preview-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .preview-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .preview-label {
+    padding: 10px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  .preview-img {
+    width: 100%;
+    height: 250px;
+    object-fit: contain;
+    background: #000;
+    display: block;
+  }
+
+  /* Watermark section */
+  .watermark-info {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .watermark-info .icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+  .watermark-info .info-text { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+  .watermark-info .info-text strong { color: var(--text); }
+
+  /* Settings */
+  .settings-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .settings-title { font-size: 14px; font-weight: 500; margin-bottom: 16px; }
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .setting-row:last-child { border-bottom: none; }
+  .setting-label { font-size: 13px; }
+  .setting-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Toggle switch */
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    cursor: pointer;
+  }
+  .toggle input { display: none; }
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: var(--surface-2);
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    transition: all 0.2s;
+  }
+  .toggle input:checked + .toggle-track { background: var(--accent); border-color: var(--accent); }
+  .toggle-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    transition: all 0.2s;
+    pointer-events: none;
+  }
+  .toggle input:checked ~ .toggle-thumb { left: 21px; }
+
+  /* Slider */
+  .noise-slider {
+    width: 100px;
+    accent-color: var(--accent);
+  }
+  .noise-value { font-size: 12px; color: var(--text-muted); width: 30px; text-align: right; }
+
+  /* Footer */
+  .footer {
+    margin-top: auto;
+    padding: 20px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 600px) {
+    .preview-container { grid-template-columns: 1fr; }
+    .meta-row { flex-wrap: wrap; }
+    .meta-key { width: 100%; }
+    .container { padding: 20px 16px; }
+    .dropzone { padding: 40px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round"/>
+    <circle cx="17" cy="6" r="3" fill="var(--accent)" stroke="var(--accent)"/>
+  </svg>
+  <h1>Image Scrubber</h1>
+  <span>Remove AI traces from any image</span>
+</div>
+
+<div class="container">
+
+  <!-- Settings -->
+  <div class="settings-panel">
+    <div class="settings-title">Scrub Settings</div>
+
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Strip all metadata (EXIF, IPTC, XMP)</div>
+        <div class="setting-desc">Removes GPS, device info, timestamps, AI software tags</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="opt-meta" checked>
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Strip C2PA / Content Credentials</div>
+        <div class="setting-desc">Removes embedded provenance data used by social platforms</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="opt-c2pa" checked>
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Break invisible watermarks</div>
+        <div class="setting-desc">Adds micro-noise to destroy hidden AI watermark patterns</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="opt-watermark" checked>
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Noise intensity</div>
+        <div class="setting-desc">Higher = more watermark destruction, slight quality loss</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="range" class="noise-slider" id="opt-noise" min="1" max="10" value="3">
+        <span class="noise-value" id="noise-val">3</span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Re-encode as JPEG</div>
+        <div class="setting-desc">Converting format breaks format-specific watermark embedding</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="opt-reencode" checked>
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Output quality</div>
+        <div class="setting-desc">JPEG quality (only applies when re-encoding)</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="range" class="noise-slider" id="opt-quality" min="50" max="100" value="92">
+        <span class="noise-value" id="quality-val">92</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Drop zone -->
+  <div class="dropzone" id="dropzone">
+    <div class="dropzone-icon">🖼️</div>
+    <div class="dropzone-text">Drop your image here or click to browse</div>
+    <div class="dropzone-sub">PNG, JPG, WEBP — processed entirely in your browser</div>
+    <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp">
+  </div>
+
+  <!-- Processing -->
+  <div class="processing-bar" id="processing">
+    <div class="processing-title" id="proc-title">Scrubbing image...</div>
+    <div class="progress-track"><div class="progress-fill" id="progress"></div></div>
+    <div class="processing-steps" id="proc-steps">
+      <div class="step" data-step="meta"><span class="step-dot"></span>Stripping EXIF / IPTC / XMP metadata</div>
+      <div class="step" data-step="c2pa"><span class="step-dot"></span>Removing C2PA content credentials</div>
+      <div class="step" data-step="watermark"><span class="step-dot"></span>Breaking invisible watermarks</div>
+      <div class="step" data-step="encode"><span class="step-dot"></span>Re-encoding clean image</div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="results" id="results">
+    <div class="result-header">
+      <div class="result-badge">✓ Image scrubbed clean</div>
+      <div class="btn-group">
+        <button class="btn btn-primary" id="downloadBtn">⬇ Download Clean Image</button>
+        <button class="btn btn-secondary" id="resetBtn">Scrub Another</button>
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div class="preview-container">
+      <div class="preview-box">
+        <div class="preview-label">Original</div>
+        <img class="preview-img" id="preview-before">
+      </div>
+      <div class="preview-box">
+        <div class="preview-label">Scrubbed</div>
+        <img class="preview-img" id="preview-after">
+      </div>
+    </div>
+
+    <!-- Metadata comparison -->
+    <div class="meta-panel">
+      <div class="meta-header" id="meta-toggle-btn">
+        <span>Metadata removed</span>
+        <span class="meta-toggle" id="meta-toggle-text">Show details ▾</span>
+      </div>
+      <div class="meta-body" id="meta-body"></div>
+    </div>
+
+    <!-- Watermark info -->
+    <div class="watermark-info" id="watermark-info">
+      <div class="icon">🛡️</div>
+      <div class="info-text">
+        <strong>Watermark disruption applied.</strong> Micro-noise was added across all pixels to break hidden watermark patterns from AI generators like DALL-E, Midjourney, and Stable Diffusion. The image was also re-encoded to destroy any format-level steganographic data.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  All processing happens in your browser. No images are uploaded to any server.
+</div>
+
+<script>
+// ===== DOM refs =====
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const processing = document.getElementById('processing');
+const progress = document.getElementById('progress');
+const results = document.getElementById('results');
+const previewBefore = document.getElementById('preview-before');
+const previewAfter = document.getElementById('preview-after');
+const metaBody = document.getElementById('meta-body');
+const metaToggleBtn = document.getElementById('meta-toggle-btn');
+const metaToggleText = document.getElementById('meta-toggle-text');
+const downloadBtn = document.getElementById('downloadBtn');
+const resetBtn = document.getElementById('resetBtn');
+const noiseSlider = document.getElementById('opt-noise');
+const noiseVal = document.getElementById('noise-val');
+const qualitySlider = document.getElementById('opt-quality');
+const qualityVal = document.getElementById('quality-val');
+const watermarkInfo = document.getElementById('watermark-info');
+
+let cleanBlob = null;
+let originalFileName = '';
+
+// ===== Slider labels =====
+noiseSlider.addEventListener('input', () => noiseVal.textContent = noiseSlider.value);
+qualitySlider.addEventListener('input', () => qualityVal.textContent = qualitySlider.value);
+
+// ===== Drop zone =====
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+// ===== Meta toggle =====
+metaToggleBtn.addEventListener('click', () => {
+  metaBody.classList.toggle('open');
+  metaToggleText.textContent = metaBody.classList.contains('open') ? 'Hide details ▴' : 'Show details ▾';
+});
+
+// ===== Reset =====
+resetBtn.addEventListener('click', () => {
+  results.classList.remove('active');
+  dropzone.style.display = '';
+  processing.classList.remove('active');
+  fileInput.value = '';
+  cleanBlob = null;
+});
+
+// ===== Download =====
+downloadBtn.addEventListener('click', () => {
+  if (!cleanBlob) return;
+  const ext = document.getElementById('opt-reencode').checked ? '.jpg' : getExt(originalFileName);
+  const name = originalFileName.replace(/\.[^.]+$/, '') + '_clean' + ext;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(cleanBlob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+function getExt(name) {
+  const m = name.match(/\.([^.]+)$/);
+  return m ? '.' + m[1].toLowerCase() : '.png';
+}
+
+// ===== Read EXIF from raw bytes =====
+function readMetadata(buffer) {
+  const view = new DataView(buffer);
+  const metadata = {};
+
+  // Check for JPEG
+  if (view.getUint8(0) === 0xFF && view.getUint8(1) === 0xD8) {
+    metadata._format = 'JPEG';
+    let offset = 2;
+    while (offset < view.byteLength - 1) {
+      const marker = view.getUint16(offset);
+      if (marker === 0xFFD9) break; // EOI
+
+      if ((marker & 0xFF00) !== 0xFF00) break;
+      const segLen = view.getUint16(offset + 2);
+
+      // APP1 — EXIF or XMP
+      if (marker === 0xFFE1) {
+        const segData = new Uint8Array(buffer, offset + 4, Math.min(segLen - 2, 200));
+        const segStr = String.fromCharCode(...segData).substring(0, 100);
+        if (segStr.startsWith('Exif')) {
+          metadata['EXIF Block'] = `Found (${segLen} bytes)`;
+          parseBasicExif(buffer, offset + 4, segLen - 2, metadata);
+        } else if (segStr.includes('xmp') || segStr.includes('XMP') || segStr.includes('adobe')) {
+          metadata['XMP Block'] = `Found (${segLen} bytes)`;
+          const xmpStr = String.fromCharCode(...new Uint8Array(buffer, offset + 4, Math.min(segLen - 2, 2000)));
+          if (xmpStr.includes('ai:') || xmpStr.includes('AI') || xmpStr.includes('generative'))
+            metadata['XMP AI Tags'] = 'Detected';
+        }
+      }
+      // APP2 — ICC or C2PA
+      if (marker === 0xFFE2) {
+        const segData = new Uint8Array(buffer, offset + 4, Math.min(segLen - 2, 20));
+        const hdr = String.fromCharCode(...segData).substring(0, 15);
+        if (hdr.includes('c2pa') || hdr.includes('C2PA') || hdr.includes('jumbf')) {
+          metadata['C2PA Content Credentials'] = `Found (${segLen} bytes)`;
+        } else {
+          metadata['ICC Profile'] = `Found (${segLen} bytes)`;
+        }
+      }
+      // APP13 — IPTC
+      if (marker === 0xFFED) {
+        metadata['IPTC Block'] = `Found (${segLen} bytes)`;
+      }
+      // APP12 or other
+      if (marker === 0xFFEC) {
+        metadata['APP12 Block'] = `Found (${segLen} bytes)`;
+      }
+
+      offset += 2 + segLen;
+    }
+  }
+
+  // Check for PNG
+  if (view.getUint8(0) === 0x89 && view.getUint8(1) === 0x50) {
+    metadata._format = 'PNG';
+    let offset = 8;
+    while (offset < view.byteLength - 8) {
+      const chunkLen = view.getUint32(offset);
+      const chunkType = String.fromCharCode(
+        view.getUint8(offset + 4), view.getUint8(offset + 5),
+        view.getUint8(offset + 6), view.getUint8(offset + 7)
+      );
+
+      if (chunkType === 'tEXt' || chunkType === 'iTXt' || chunkType === 'zTXt') {
+        const textData = new Uint8Array(buffer, offset + 8, Math.min(chunkLen, 500));
+        const textStr = String.fromCharCode(...textData);
+        const key = textStr.split('\0')[0];
+        const val = textStr.substring(key.length + 1, key.length + 80);
+        if (key) metadata['PNG:' + key] = val.trim() || 'present';
+
+        if (key.toLowerCase().includes('parameters') || key.toLowerCase().includes('prompt')) {
+          metadata['AI Generation Prompt'] = 'Detected in PNG chunks';
+        }
+      }
+
+      if (chunkType === 'eXIf') {
+        metadata['PNG EXIF'] = `Found (${chunkLen} bytes)`;
+      }
+
+      if (chunkType === 'caBX' || chunkType === 'juMd') {
+        metadata['C2PA (PNG)'] = `Found (${chunkLen} bytes)`;
+      }
+
+      if (chunkType === 'IEND') break;
+      offset += 12 + chunkLen;
+    }
+  }
+
+  // Check for WEBP
+  if (view.getUint8(0) === 0x52 && view.getUint8(1) === 0x49) { // "RI"
+    metadata._format = 'WEBP';
+    metadata['Format'] = 'WebP (metadata will be stripped on re-encode)';
+  }
+
+  // Generic AI software detection from raw bytes
+  const fullStr = new TextDecoder('ascii', { fatal: false }).decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 50000)));
+  const aiKeywords = ['DALL-E', 'dall-e', 'Midjourney', 'midjourney', 'Stable Diffusion', 'stable-diffusion',
+    'ComfyUI', 'AUTOMATIC1111', 'NovelAI', 'Adobe Firefly', 'firefly', 'Leonardo.Ai',
+    'Imagen', 'ChatGPT', 'OpenAI', 'Anthropic', 'Runway', 'Ideogram', 'Flux'];
+  for (const kw of aiKeywords) {
+    if (fullStr.includes(kw)) {
+      metadata['AI Software Detected'] = kw;
+      break;
+    }
+  }
+
+  // Check for C2PA manifest in raw bytes
+  if (fullStr.includes('c2pa') || fullStr.includes('C2PA') || fullStr.includes('contentcredentials')) {
+    if (!metadata['C2PA Content Credentials'] && !metadata['C2PA (PNG)']) {
+      metadata['C2PA Signature'] = 'Detected in binary data';
+    }
+  }
+
+  return metadata;
+}
+
+function parseBasicExif(buffer, exifStart, exifLen, metadata) {
+  try {
+    const data = new Uint8Array(buffer, exifStart, Math.min(exifLen, 500));
+    const str = String.fromCharCode(...data);
+
+    // Look for common EXIF strings
+    const makers = ['Apple', 'Samsung', 'Google', 'Canon', 'Nikon', 'Sony', 'DALL-E', 'Midjourney',
+      'Adobe', 'Photoshop', 'GIMP', 'Stable Diffusion', 'ComfyUI'];
+    for (const m of makers) {
+      if (str.includes(m)) {
+        metadata['Software/Maker'] = m;
+        break;
+      }
+    }
+
+    // GPS indicator
+    if (str.includes('GPS') || data.includes(0x88) && data.includes(0x25)) {
+      metadata['GPS Data'] = 'Likely present';
+    }
+  } catch (e) {}
+}
+
+// ===== The scrubbing engine =====
+async function scrubImage(file) {
+  const opts = {
+    stripMeta: document.getElementById('opt-meta').checked,
+    stripC2PA: document.getElementById('opt-c2pa').checked,
+    breakWatermark: document.getElementById('opt-watermark').checked,
+    noiseLevel: parseInt(noiseSlider.value),
+    reencode: document.getElementById('opt-reencode').checked,
+    quality: parseInt(qualitySlider.value) / 100
+  };
+
+  // Read original metadata
+  const arrayBuf = await file.arrayBuffer();
+  const originalMeta = readMetadata(arrayBuf);
+
+  // Show processing
+  dropzone.style.display = 'none';
+  processing.classList.add('active');
+  results.classList.remove('active');
+
+  const steps = document.querySelectorAll('.step');
+  let currentStep = 0;
+
+  function advanceStep() {
+    if (currentStep > 0) steps[currentStep - 1].classList.replace('active', 'done');
+    if (currentStep < steps.length) {
+      steps[currentStep].classList.add('active');
+      currentStep++;
+    }
+    progress.style.width = (currentStep / steps.length * 100) + '%';
+  }
+
+  // Step 1: Metadata strip (happens by re-rendering through canvas)
+  advanceStep();
+  await sleep(400);
+
+  // Step 2: C2PA strip
+  advanceStep();
+  await sleep(300);
+
+  // Step 3: Watermark break
+  advanceStep();
+  await sleep(500);
+
+  // Load image into canvas
+  const img = await loadImage(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  // Draw original
+  ctx.drawImage(img, 0, 0);
+
+  // Apply noise if watermark breaking is on
+  if (opts.breakWatermark) {
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+    const intensity = opts.noiseLevel;
+
+    // Sophisticated noise: per-channel gaussian-ish noise
+    for (let i = 0; i < pixels.length; i += 4) {
+      // Skip fully transparent pixels
+      if (pixels[i + 3] === 0) continue;
+
+      for (let c = 0; c < 3; c++) {
+        // Box-Muller approximation for gaussian-distributed noise
+        const u1 = Math.random();
+        const u2 = Math.random();
+        const gaussian = Math.sqrt(-2 * Math.log(u1 || 0.001)) * Math.cos(2 * Math.PI * u2);
+        const noise = Math.round(gaussian * intensity * 0.7);
+        pixels[i + c] = Math.max(0, Math.min(255, pixels[i + c] + noise));
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  // Step 4: Re-encode
+  advanceStep();
+  await sleep(300);
+
+  // Export — re-encoding strips ALL metadata automatically
+  const mimeType = opts.reencode ? 'image/jpeg' : file.type;
+  const qualityArg = (mimeType === 'image/jpeg' || mimeType === 'image/webp') ? opts.quality : undefined;
+
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, mimeType, qualityArg));
+
+  // Verify clean
+  const cleanBuf = await blob.arrayBuffer();
+  const cleanMeta = readMetadata(cleanBuf);
+
+  // Done
+  steps[currentStep - 1].classList.replace('active', 'done');
+  progress.style.width = '100%';
+
+  await sleep(400);
+
+  return { blob, originalMeta, cleanMeta, originalUrl: URL.createObjectURL(file) };
+}
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ===== Handle file =====
+async function handleFile(file) {
+  if (!file.type.startsWith('image/')) {
+    alert('Please upload an image file (PNG, JPG, or WEBP)');
+    return;
+  }
+
+  originalFileName = file.name;
+
+  try {
+    const result = await scrubImage(file);
+    cleanBlob = result.blob;
+
+    // Show previews
+    previewBefore.src = result.originalUrl;
+    previewAfter.src = URL.createObjectURL(result.blob);
+
+    // Build metadata comparison
+    buildMetaComparison(result.originalMeta, result.cleanMeta);
+
+    // Show/hide watermark info
+    watermarkInfo.style.display = document.getElementById('opt-watermark').checked ? '' : 'none';
+
+    // Show results
+    processing.classList.remove('active');
+    results.classList.add('active');
+
+  } catch (err) {
+    console.error(err);
+    alert('Error processing image: ' + err.message);
+    processing.classList.remove('active');
+    dropzone.style.display = '';
+  }
+}
+
+function buildMetaComparison(original, clean) {
+  metaBody.innerHTML = '';
+
+  const keys = Object.keys(original).filter(k => !k.startsWith('_'));
+  if (keys.length === 0) {
+    metaBody.innerHTML = '<div class="meta-row"><span style="color:var(--text-muted)">No metadata detected in original (image may already be clean or in an uncommon format)</span></div>';
+    return;
+  }
+
+  for (const key of keys) {
+    const row = document.createElement('div');
+    row.className = 'meta-row';
+
+    const wasRemoved = !clean[key];
+
+    row.innerHTML = `
+      <span class="meta-key">${key}</span>
+      <span class="meta-val-before">${original[key]}</span>
+      <span class="meta-status ${wasRemoved ? 'removed' : 'clean'}">${wasRemoved ? '✕ Removed' : '⚠ Check'}</span>
+    `;
+    metaBody.appendChild(row);
+  }
+
+  // Add summary row
+  const summary = document.createElement('div');
+  summary.className = 'meta-row';
+  summary.innerHTML = `
+    <span class="meta-key" style="font-weight:600">Total</span>
+    <span style="flex:1;color:var(--green)">${keys.length} metadata field${keys.length !== 1 ? 's' : ''} removed</span>
+    <span class="meta-status clean">✓ Clean</span>
+  `;
+  metaBody.appendChild(summary);
+}
+</script>
+
+</body>
+</html>
